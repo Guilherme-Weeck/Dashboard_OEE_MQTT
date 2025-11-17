@@ -1,0 +1,773 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Dashboard OEE</title>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<!-- MQTT.js -->
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+<style>
+  /* ================= THEME VARIABLES ================= */
+  :root{
+    --bg-light: #f3f6f9;
+    --card-light: #ffffff;
+    --text-light: #1f2937;
+    --muted-light: #475569;
+    --accent: #2563eb;
+    --success: #16a34a;
+    --danger: #ef4444;
+    --glass: rgba(255,255,255,0.6);
+    --radius: 12px;
+  }
+
+  /* ===== Dark Azul Tech (corrigido) ===== */
+  [data-theme="dark-blue"]{
+      --bg-light: #0f1724;
+      --card-light: #111827;
+      --text-light: #e6eef8;
+      --muted-light: #b7c9e6;
+      --accent: #4cc2ff;
+      --glass: rgba(255,255,255,0.06);
+      --border-dark: rgba(255,255,255,0.10);
+  }
+
+  /* Ajustes gerais do modo dark para garantir leitura */
+  [data-theme="dark-blue"] body,
+  [data-theme="dark-blue"] .machine,
+  [data-theme="dark-blue"] .drawer {
+      background: var(--card-light);
+      color: var(--text-light);
+  }
+
+  [data-theme="dark-blue"] input,
+  [data-theme="dark-blue"] input[type="password"],
+  [data-theme="dark-blue"] select {
+      color: var(--text-light);
+      background: #1a2332;
+      border: 1px solid rgba(255,255,255,0.15);
+  }
+
+  [data-theme="dark-blue"] .mini-btn {
+      background: rgba(255,255,255,0.10);
+      color: var(--text-light);
+      border: 1px solid rgba(255,255,255,0.15);
+  }
+
+  [data-theme="dark-blue"] .btn-primary {
+      background: var(--accent);
+      color: #00131c;
+      font-weight: 700;
+  }
+
+  [data-theme="dark-blue"] .machine-title input{
+      color: var(--text-light);
+  }
+
+  [data-theme="dark-blue"] .machine-status{
+      color: var(--muted-light);
+  }
+
+  [data-theme="dark-blue"] .machine-header{
+      border-color: rgba(255,255,255,0.12);
+  }
+
+  [data-theme="dark-blue"] .machine {
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.08),
+                  0 6px 20px rgba(0,0,0,0.4);
+  }
+
+  /* ================ Global ================ */
+  *{box-sizing:border-box}
+  body{
+    margin:0;
+    font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial;
+    background: var(--bg-light);
+    color: var(--text-light);
+    -webkit-font-smoothing:antialiased;
+    -moz-osx-font-smoothing:grayscale;
+  }
+
+  a{color:inherit}
+
+  /* ================ Header ================ */
+  .header{
+    position:sticky; top:0; z-index:60;
+    display:flex; align-items:center; gap:12px;
+    padding:12px 16px;
+    background: var(--glass);
+    border-bottom:1px solid var(--border-dark, rgba(0,0,0,0.06));
+    backdrop-filter: blur(6px);
+  }
+  .brand{font-weight:700;}
+  .header-actions{margin-left:auto; display:flex; align-items:center; gap:8px;}
+  .btn{padding:8px 10px;border-radius:10px;border:0;background:transparent;cursor:pointer}
+  .btn-primary{background:var(--accent); color:#020617; font-weight:700}
+
+  .status{display:flex;align-items:center;gap:8px;font-size:13px}
+  .status .dot{width:10px;height:10px;border-radius:50%;background:var(--danger)}
+
+  /* ================ Container ================ */
+  .container{
+    max-width:1200px;
+    margin:16px auto;
+    padding:0 14px 80px 14px;
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+  }
+
+  .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+
+  /* ================ Machine card ================ */
+  .machine{
+    background:var(--card-light);
+    border-radius:12px;
+    padding:12px;
+    box-shadow: 0 6px 18px rgba(2,6,23,0.08);
+    border:1px solid var(--border-dark, rgba(0,0,0,0.06));
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+  }
+  .machine + .machine{margin-top:12px}
+
+  .machine-header{display:flex;align-items:center;gap:12px}
+  .machine-title{font-weight:700;font-size:16px;flex:1;display:flex;gap:8px;align-items:center}
+  .machine-title input{
+      font-weight:700;font-size:16px;
+      border:0;background:transparent;
+      color:inherit;width:160px;
+  }
+
+  .machine-actions{display:flex;gap:8px;align-items:center}
+  .mini-btn{padding:6px 8px;border-radius:8px;border:0;background:rgba(0,0,0,0.04);cursor:pointer}
+
+  .machine-status{font-size:13px; color:var(--muted-light)}
+  .machine-dot{width:10px;height:10px;border-radius:50%;background:var(--danger)}
+
+  /* ================ machine body layout ================ */
+  .machine-body{
+    display:grid;
+    grid-template-columns: 320px 1fr;
+    gap:12px;
+    align-items:center;
+  }
+
+  .gauge-wrap{display:flex;flex-direction:column;align-items:center;gap:6px;padding:6px}
+  .gauge-card{width:100%;max-width:320px;height:260px;display:flex;align-items:center;justify-content:center}
+  .bar-card{padding:6px}
+
+  .chart-container{width:100%;height:220px;position:relative}
+  .donut-container{width:100%;height:260px;position:relative;display:flex;align-items:center;justify-content:center}
+
+  .vals-row{display:flex;justify-content:space-between;margin-top:8px;color:var(--muted-light);font-size:13px;padding:0 6px}
+
+  @media (max-width:920px){
+    .machine-body{grid-template-columns: 1fr}
+    .machine-title input{width:120px}
+    .gauge-card{max-width:100%;height:200px}
+    .chart-container{height:200px}
+  }
+
+  /* ================ Drawer ================ */
+  .drawer{
+    position:fixed; right:0; top:0; height:100%; width:360px; max-width:92%;
+    background:var(--card-light); padding:14px; box-shadow:-8px 0 40px rgba(0,0,0,0.14);
+    transform:translateX(110%); transition:transform .22s ease; z-index:140; overflow:auto;
+  }
+  .drawer.open{transform:translateX(0)}
+  .field{margin-bottom:12px}
+  label{display:block;font-size:13px;margin-bottom:6px;color:var(--muted-light)}
+  input[type="text"], input[type="password"], input[type="number"]{
+      width:100%;padding:8px;border-radius:8px;
+      border:1px solid rgba(0,0,0,0.06);
+      background:transparent;color:inherit
+  }
+
+  .meta{font-size:12px;color:var(--muted-light)}
+
+  /* ============================================
+     MOBILE FIX — Nome completo + quebra correta
+     ============================================ */
+  @media (max-width: 600px){
+
+    .machine-header{
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+        width: 100%;
+    }
+
+    .machine-title{
+        width: 100%;
+    }
+
+    .machine-title input{
+        width: 100% !important;
+        white-space: normal;
+        overflow-wrap: break-word;
+    }
+
+    .machine-actions{
+        width: 100%;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    .machine-status{
+        width: 100%;
+        margin-top: 4px;
+    }
+  }
+
+</style>
+
+</head>
+<body>
+
+  <div class="header">
+    <div class="brand">Dashboard OEE</div>
+
+    <div class="header-actions">
+      <div class="status">
+        <div id="globalDot" class="dot"></div>
+        <div id="globalStatus">Nenhuma conexão</div>
+      </div>
+
+      <button id="themeToggle" class="btn" title="Alternar tema">🌙</button>
+      <button id="addMachineBtn" class="btn btn-primary">+ Adicionar Máquina</button>
+    </div>
+  </div>
+
+  <main class="container" id="machinesContainer">
+    <!-- máquinas injetadas aqui -->
+  </main>
+
+  <!-- drawer -->
+  <aside id="drawer" class="drawer" aria-hidden="true">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div>
+        <strong id="drawerTitle">Configurações</strong><br>
+        <span id="drawerSub" class="meta"></span>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button id="saveCfgBtn" class="mini-btn">Salvar</button>
+        <button id="closeDrawerBtn" class="mini-btn">Fechar</button>
+      </div>
+    </div>
+
+    <div id="drawerContent">
+        <div class="field">
+            <label>Nome da Máquina</label>
+            <input id="cfgName" type="text">
+        </div>
+
+      <div class="field">
+        <label>Broker (wss)</label>
+        <input id="cfgBroker" type="text" placeholder="wss://broker:8884/mqtt">
+      </div>
+      <div class="field">
+        <label>Client ID</label>
+        <input id="cfgClientId" type="text" placeholder="cliente-01">
+      </div>
+      <div class="field">
+            <label>Usuário (username)</label>
+            <input id="cfgUser" type="text" placeholder="Opcional">
+        </div>
+
+        <div class="field">
+            <label>Senha (password)</label>
+            <input id="cfgPass" type="password" placeholder="Opcional">
+        </div>
+
+      <hr>
+
+      <div class="field">
+        <label>Tópico Disponibilidade</label>
+        <input id="cfgTDisp" type="text">
+      </div>
+      <div class="field">
+        <label>Multiplicador Disponibilidade</label>
+        <input id="cfgMDisp" type="number" step="0.01" value="1">
+      </div>
+
+      <div class="field">
+        <label>Tópico Performance</label>
+        <input id="cfgTPerf" type="text">
+      </div>
+      <div class="field">
+        <label>Multiplicador Performance</label>
+        <input id="cfgMPerf" type="number" step="0.01" value="1">
+      </div>
+
+      <div class="field">
+        <label>Tópico Qualidade</label>
+        <input id="cfgTQual" type="text">
+      </div>
+      <div class="field">
+        <label>Multiplicador Qualidade</label>
+        <input id="cfgMQual" type="number" step="0.01" value="1">
+      </div>
+
+      <div class="field">
+        <label>Tópico OEE</label>
+        <input id="cfgTOee" type="text">
+      </div>
+      <div class="field">
+        <label>Multiplicador OEE</label>
+        <input id="cfgMOee" type="number" step="0.01" value="1">
+      </div>
+
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button id="btnDrawerConnect" class="btn btn-primary">Conectar</button>
+        <button id="btnDrawerDisconnect" class="btn">Desconectar</button>
+      </div>
+
+      <div style="margin-top:12px" class="meta">Configuração salva por máquina no localStorage.</div>
+    </div>
+  </aside>
+
+<script>
+/* ===== Storage keys ===== */
+const STORAGE_MACHINES = 'oee_machines_v2';
+const STORAGE_THEME = 'oee_theme_v2';
+
+/* ===== State ===== */
+let machines = {}; // id -> machine object
+let activeDrawerMachine = null;
+
+/* ===== Utilities ===== */
+const $ = (sel, ctx=document) => ctx.querySelector(sel);
+const create = (tag, attrs={}, children=[]) => {
+  const el = document.createElement(tag);
+  for(const k in attrs) {
+    if(k === 'class') el.className = attrs[k];
+    else if(k === 'text') el.textContent = attrs[k];
+    else el.setAttribute(k, attrs[k]);
+  }
+  children.forEach(c => el.appendChild(c));
+  return el;
+};
+const uid = () => 'm' + Math.random().toString(36).slice(2,9);
+
+/* ===== Theme handling ===== */
+function applyTheme(theme){
+  if(theme === 'dark-blue') {
+    document.documentElement.setAttribute('data-theme','dark-blue');
+    document.getElementById('themeToggle').textContent = '☀️';
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+    document.getElementById('themeToggle').textContent = '🌙';
+  }
+  localStorage.setItem(STORAGE_THEME, theme);
+}
+// toggle
+document.getElementById('themeToggle').addEventListener('click', ()=>{
+  const cur = localStorage.getItem(STORAGE_THEME) || 'dark-blue';
+  const next = (cur === 'dark-blue') ? 'light' : 'dark-blue';
+  applyTheme(next);
+  // force charts resize to adapt colors
+  Object.values(machines).forEach(m => {
+    if(m.charts && m.charts.bar) m.charts.bar.resize();
+    if(m.charts && m.charts.donut) m.charts.donut.resize();
+  });
+});
+// initialize theme: default to dark-blue if none
+applyTheme(localStorage.getItem(STORAGE_THEME) || 'dark-blue');
+
+/* ===== Drawer functions ===== */
+const drawer = document.getElementById('drawer');
+function openDrawer(id){
+  activeDrawerMachine = id;
+  const m = machines[id];
+  if(!m) return;
+  drawer.classList.add('open');
+  $('#drawerTitle').textContent = 'Config — ' + m.name;
+  $('#drawerSub').textContent = 'ID: ' + m.id;
+  $('#cfgName').value = m.name || '';
+  // populate fields
+  $('#cfgBroker').value = m.config.broker || '';
+  $('#cfgClientId').value = m.config.clientId || '';
+  $('#cfgUser').value = m.config.username || '';
+  $('#cfgPass').value = m.config.password || '';
+  $('#cfgTDisp').value = m.config.tDisp || '';
+  $('#cfgMDisp').value = m.config.mDisp || 1;
+  $('#cfgTPerf').value = m.config.tPerf || '';
+  $('#cfgMPerf').value = m.config.mPerf || 1;
+  $('#cfgTQual').value = m.config.tQual || '';
+  $('#cfgMQual').value = m.config.mQual || 1;
+  $('#cfgTOee').value = m.config.tOee || '';
+  $('#cfgMOee').value = m.config.mOee || 1;
+  $('#cfgName').addEventListener('input', ()=> {
+        m.name = $('#cfgName').value.trim() || m.name;
+
+        // Atualiza o título no card
+        m.dom.querySelector('.machine-title').textContent = m.name;
+
+        // Atualiza o título do drawer
+        $('#drawerTitle').textContent = 'Config — ' + m.name;
+
+        saveAllMachines();
+  });
+}
+function closeDrawer(){ drawer.classList.remove('open'); activeDrawerMachine = null; }
+document.getElementById('closeDrawerBtn').addEventListener('click', closeDrawer);
+
+/* ===== Persistence ===== */
+function saveAllMachines(){
+  const compact = Object.values(machines).map(m => ({ id: m.id, name: m.name, config: m.config }));
+  localStorage.setItem(STORAGE_MACHINES, JSON.stringify(compact));
+}
+function loadMachinesFromStorage(){
+  const raw = localStorage.getItem(STORAGE_MACHINES);
+  if(!raw) return [];
+  try { return JSON.parse(raw); } catch(e) { return []; }
+}
+
+/* ===== Charts helpers ===== */
+function makeDonutChart(canvas, theme){
+  const pluginCenter = {
+    id: 'centerText',
+    beforeDraw(chart){
+      const ctx = chart.ctx;
+      const value = Math.round(chart.data.datasets[0].value || 0);
+      ctx.save();
+      ctx.font = '700 ' + Math.round(chart.height/6) + 'px Inter, Arial';
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-light') || '#fff';
+      ctx.textAlign = 'center';
+      ctx.fillText(value + '%', chart.width/2, chart.height/2 + 8);
+      ctx.restore();
+    }
+  };
+
+  const bg = (theme === 'dark-blue') ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#2563eb';
+  return new Chart(canvas, {
+    type: 'doughnut',
+    data: { labels:['OEE','rest'], datasets:[{ data:[0,100], value:0, backgroundColor:[accent, bg] }] },
+    options: {
+      responsive:true,
+      maintainAspectRatio:false,
+      cutout:'70%',
+      plugins:{ legend:{display:false}, tooltip:{enabled:false} }
+    },
+    plugins: [pluginCenter]
+  });
+}
+function makeBarChart(canvas){
+  // colors chosen to show on dark/light
+  const colors = ['#4CC2FF','#4CD964','#FFBE44','#9B59FF'];
+  return new Chart(canvas, {
+    type:'bar',
+    data:{ labels:['Disponibilidade','Performance','Qualidade','OEE'], datasets:[{ data:[0,0,0,0], backgroundColor: colors }] },
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      plugins:{ legend:{display:false} },
+      scales:{
+        x:{ ticks:{ color: getComputedStyle(document.documentElement).getPropertyValue('--muted-light') || '#888' } },
+        y:{ beginAtZero:true, max:100, ticks:{ color: getComputedStyle(document.documentElement).getPropertyValue('--muted-light') || '#888' } }
+      }
+    }
+  });
+}
+
+/* ===== MQTT helpers ===== */
+function clamp(v){ return Math.max(0, Math.min(100, Number(v||0))); }
+
+function mqttConnectForMachine(mid){
+  const m = machines[mid];
+  if(!m) return;
+  // if drawer active and editing, copy values first
+  if(activeDrawerMachine === mid){
+
+    m.config.broker = $('#cfgBroker').value.trim();
+    m.config.clientId = $('#cfgClientId').value.trim();
+    m.config.username = $('#cfgUser').value.trim();
+    m.config.password = $('#cfgPass').value.trim();
+    m.config.tDisp = $('#cfgTDisp').value.trim();
+    m.config.mDisp = parseFloat($('#cfgMDisp').value)||1;
+    m.config.tPerf = $('#cfgTPerf').value.trim();
+    m.config.mPerf = parseFloat($('#cfgMPerf').value)||1;
+    m.config.tQual = $('#cfgTQual').value.trim();
+    m.config.mQual = parseFloat($('#cfgMQual').value)||1;
+    m.config.tOee = $('#cfgTOee').value.trim();
+    m.config.mOee = parseFloat($('#cfgMOee').value)||1;
+  }
+
+  if(!m.config.broker || !(m.config.broker.startsWith('ws://') || m.config.broker.startsWith('wss://'))){
+    setMachineStatus(mid,false,'Broker inválido (use ws:// ou wss://)');
+    return;
+  }
+
+  // close existing
+  if(m.client){ try{ m.client.end(true); }catch(e){} m.client=null; }
+
+  try {
+    const clientId = (m.config.clientId || ('oee-'+mid)).toString().substring(0,20) + '-' + Math.floor(Math.random()*9999);
+    const client = mqtt.connect(m.config.broker, {
+        clientId,
+        username: m.config.username || undefined,
+        password: m.config.password || undefined,
+        clean: true,
+        reconnectPeriod: 2000,
+        connectTimeout: 5000,
+        keepalive: 30,
+        protocolVersion: 4
+    });
+
+    m.client = client;
+    setMachineStatus(mid,false,'Conectando...');
+    client.on('connect', ()=>{
+      setMachineStatus(mid,true,'Conectado');
+      // subscribe
+      [m.config.tDisp,m.config.tPerf,m.config.tQual,m.config.tOee].forEach(t => {
+        if(t && t.trim()!=='') {
+          try { client.subscribe(t); } catch(e) { console.warn('subscribe failed', e); }
+        }
+      });
+    });
+    client.on('reconnect', ()=> setMachineStatus(mid,false,'Reconectando...'));
+    client.on('close', ()=> setMachineStatus(mid,false,'Desconectado'));
+    client.on('error', (err)=> { console.error('mqtt err',err); setMachineStatus(mid,false,'Erro'); });
+    client.on('message', (topic, message) => {
+      const v = parseFloat(message.toString());
+      if(isNaN(v)) return;
+      if(topic === m.config.tDisp) m.disp = clamp(v * (parseFloat(m.config.mDisp)||1));
+      if(topic === m.config.tPerf) m.perf = clamp(v * (parseFloat(m.config.mPerf)||1));
+      if(topic === m.config.tQual) m.qual = clamp(v * (parseFloat(m.config.mQual)||1));
+      if(topic === m.config.tOee)  m.oee  = clamp(v * (parseFloat(m.config.mOee)||1));
+      refreshMachineVisuals(mid);
+    });
+  } catch(e) {
+    console.error('mqtt connect error', e);
+    setMachineStatus(mid,false,'Erro ao conectar');
+  }
+  saveAllMachines();
+}
+
+function mqttDisconnectForMachine(mid){
+  const m = machines[mid];
+  if(!m) return;
+  if(m.client){ try{ m.client.end(true); } catch(e){} m.client = null; }
+  setMachineStatus(mid,false,'Desconectado');
+  saveAllMachines();
+}
+
+/* ===== Machine UI creation ===== */
+function setMachineStatus(mid, connected, text){
+  const m = machines[mid];
+  if(!m) return;
+  const statusText = m.dom.querySelector('.machine-status');
+  const dot = m.dom.querySelector('.machine-dot');
+  statusText.textContent = text || (connected ? 'Conectado' : 'Desconectado');
+  dot.style.background = connected ? getComputedStyle(document.documentElement).getPropertyValue('--success') : getComputedStyle(document.documentElement).getPropertyValue('--danger');
+  // global indicator:
+  const anyConnected = Object.values(machines).some(x => x.client);
+  document.getElementById('globalDot').style.background = anyConnected ? getComputedStyle(document.documentElement).getPropertyValue('--success') : getComputedStyle(document.documentElement).getPropertyValue('--danger');
+  document.getElementById('globalStatus').textContent = anyConnected ? 'Alguma máquina conectada' : 'Nenhuma conexão';
+}
+
+function refreshMachineVisuals(mid){
+  const m = machines[mid];
+  if(!m) return;
+  // update small textual values (under bars)
+  m.dom.querySelector('.val-disp').textContent = m.disp.toFixed(1) + '%';
+  m.dom.querySelector('.val-perf').textContent = m.perf.toFixed(1) + '%';
+  m.dom.querySelector('.val-qual').textContent = m.qual.toFixed(1) + '%';
+  m.dom.querySelector('.val-oee').textContent  = m.oee.toFixed(1) + '%';
+  // update charts
+  m.charts.bar.data.datasets[0].data = [m.disp, m.perf, m.qual, m.oee];
+  m.charts.bar.update();
+  m.charts.donut.data.datasets[0].data = [m.oee, Math.max(0,100-m.oee)];
+  m.charts.donut.data.datasets[0].value = m.oee;
+  m.charts.donut.update();
+  // last update
+  m.dom.querySelector('.last-update').textContent = new Date().toLocaleString();
+}
+
+/* create machine DOM + state */
+function createMachine(initial){
+  const id = initial && initial.id ? initial.id : uid();
+  const name = (initial && initial.name) ? initial.name : ('Máquina ' + (Object.keys(machines).length + 1).toString().padStart(2,'0'));
+  const cfg = (initial && initial.config) ? initial.config : {
+    broker: 'wss://broker.hivemq.com:8884/mqtt',
+    clientId: 'oee-' + id,
+    tDisp:'', mDisp:1,
+    tPerf:'', mPerf:1,
+    tQual:'', mQual:1,
+    tOee:'', mOee:1
+  };
+
+  // wrapper
+  const wrapper = create('div',{class:'machine', id:'machine-'+id});
+  // header
+  const header = create('div',{class:'machine-header'});
+  const title = create('div',{class:'machine-title'});
+  title.textContent = name;   // apenas mostra o nome
+
+
+  const actions = create('div',{class:'machine-actions'});
+  const cfgBtn = create('button',{class:'mini-btn', title:'Configurações'}, [document.createTextNode('⚙️')]);
+  const connectBtn = create('button',{class:'mini-btn'}, [document.createTextNode('Conectar')]);
+  const disconnectBtn = create('button',{class:'mini-btn'}, [document.createTextNode('Desconectar')]);
+  const removeBtn = create('button',{class:'mini-btn'}, [document.createTextNode('🗑️')]);
+
+  const statusWrap = create('div',{style:'display:flex;align-items:center;gap:8px'});
+  const dot = create('span',{class:'dot machine-dot'});
+  const statusText = create('span',{class:'machine-status', text:'Desconectado'});
+  statusWrap.appendChild(dot); statusWrap.appendChild(statusText);
+
+  actions.appendChild(cfgBtn); actions.appendChild(connectBtn); actions.appendChild(disconnectBtn); actions.appendChild(removeBtn);
+  header.appendChild(title); header.appendChild(actions); header.appendChild(statusWrap);
+
+  // body
+  const body = create('div',{class:'machine-body'});
+  // donut area
+  const gwrap = create('div',{class:'gauge-wrap'});
+  const donutCard = create('div',{class:'gauge-card'});
+  const donutCanvas = create('canvas', { });
+  donutCanvas.style.width = '100%';
+  donutCanvas.style.height = '100%';
+  donutCard.appendChild(donutCanvas);
+  const lastUpdate = create('div',{class:'last-update meta', text:'-'});
+  gwrap.appendChild(donutCard);
+  gwrap.appendChild(lastUpdate);
+
+  // bar area
+  const chartWrap = create('div',{class:'bar-card'});
+  const barContainer = create('div',{class:'chart-container'});
+  const barCanvas = create('canvas', {});
+  barCanvas.style.width = '100%';
+  barCanvas.style.height = '100%';
+  barContainer.appendChild(barCanvas);
+  chartWrap.appendChild(barContainer);
+
+  // small values row
+  const valsRow = create('div',{class:'vals-row'});
+  const vDisp = create('div',{class:'val-disp', text:'0%'}); vDisp.style.minWidth='60px';
+  const vPerf = create('div',{class:'val-perf', text:'0%'}); vPerf.style.minWidth='60px';
+  const vQual = create('div',{class:'val-qual', text:'0%'}); vQual.style.minWidth='60px';
+  const vOee = create('div',{class:'val-oee', text:'0%'}); vOee.style.minWidth='60px';
+  valsRow.appendChild(vDisp); valsRow.appendChild(vPerf); valsRow.appendChild(vQual); valsRow.appendChild(vOee);
+  chartWrap.appendChild(valsRow);
+
+  body.appendChild(gwrap); body.appendChild(chartWrap);
+
+  wrapper.appendChild(header); wrapper.appendChild(body);
+  document.getElementById('machinesContainer').appendChild(wrapper);
+
+  // build machine object
+  const machine = {
+    id, name, dom: wrapper, config: cfg,
+    disp:0, perf:0, qual:0, oee:0,
+    client: null, charts: {}
+  };
+  machines[id] = machine;
+
+  // init charts (responsive)
+  machine.charts.donut = makeDonutChart(donutCanvas, localStorage.getItem(STORAGE_THEME) || 'dark-blue');
+  machine.charts.bar = makeBarChart(barCanvas);
+
+  // wire actions
+  cfgBtn.addEventListener('click', ()=> {
+    openDrawer(id);
+    // when drawer opens on mobile, scroll machine into view for context
+    wrapper.scrollIntoView({behavior:'smooth', block:'center'});
+  });
+  connectBtn.addEventListener('click', ()=> mqttConnectForMachine(id));
+  disconnectBtn.addEventListener('click', ()=> mqttDisconnectForMachine(id));
+  removeBtn.addEventListener('click', ()=> {
+    if(confirm('Remover ' + (machine.name || 'máquina') + '?')){
+      mqttDisconnectForMachine(id);
+      wrapper.remove();
+      delete machines[id];
+      saveAllMachines();
+    }
+  });
+
+  // initial visuals
+  refreshMachineVisuals(id);
+  setMachineStatus(id,false,'Desconectado');
+
+  return machine;
+}
+
+/* ===== Drawer control buttons ===== */
+document.getElementById('saveCfgBtn').addEventListener('click', ()=>{
+  if(!activeDrawerMachine) return;
+  const m = machines[activeDrawerMachine];
+  if(!m) return;
+  m.config.broker = $('#cfgBroker').value.trim();
+  m.config.clientId = $('#cfgClientId').value.trim();
+  m.config.tDisp = $('#cfgTDisp').value.trim();
+  m.config.mDisp = parseFloat($('#cfgMDisp').value) || 1;
+  m.config.tPerf = $('#cfgTPerf').value.trim();
+  m.config.mPerf = parseFloat($('#cfgMPerf').value) || 1;
+  m.config.tQual = $('#cfgTQual').value.trim();
+  m.config.mQual = parseFloat($('#cfgMQual').value) || 1;
+  m.config.tOee = $('#cfgTOee').value.trim();
+  m.config.mOee = parseFloat($('#cfgMOee').value) || 1;
+  saveAllMachines();
+  alert('Configuração salva (' + m.name + ')');
+});
+
+document.getElementById('btnDrawerConnect').addEventListener('click', ()=>{
+  if(!activeDrawerMachine) return;
+  document.getElementById('saveCfgBtn').click();
+  mqttConnectForMachine(activeDrawerMachine);
+  // close drawer on mobile for better UX
+  if(window.innerWidth < 900) closeDrawer();
+});
+document.getElementById('btnDrawerDisconnect').addEventListener('click', ()=>{
+  if(!activeDrawerMachine) return;
+  mqttDisconnectForMachine(activeDrawerMachine);
+});
+
+/* ===== Add machine button ===== */
+document.getElementById('addMachineBtn').addEventListener('click', ()=>{
+  const m = createMachine();
+  saveAllMachines();
+  setTimeout(()=> m.dom.scrollIntoView({behavior:'smooth'}), 80);
+});
+
+/* ===== Initialize machines from storage (or create default) ===== */
+function initFromStorage(){
+  const saved = loadMachinesFromStorage();
+  if(!saved || saved.length === 0) {
+    // create one default machine
+    createMachine({ name: 'Máquina 01', config: { broker:'wss://broker.hivemq.com:8884/mqtt', clientId:'oee-01' }});
+    saveAllMachines();
+    return;
+  }
+  saved.forEach(s => createMachine({ id: s.id, name: s.name, config: s.config }));
+}
+initFromStorage();
+
+/* ===== close drawer when clicking outside (mobile-friendly) ===== */
+document.addEventListener('click', (e)=>{
+  if(!drawer.classList.contains('open')) return;
+  if(drawer.contains(e.target)) return;
+  // ignore clicks on config buttons that will open drawer (they handle it)
+  if(e.target.closest('.mini-btn') && e.target.closest('.mini-btn').textContent.includes('⚙️')) return;
+  closeDrawer();
+});
+
+/* ===== global cleanup ===== */
+window.addEventListener('beforeunload', ()=>{
+  Object.values(machines).forEach(m => { if(m.client) try{ m.client.end(true); }catch(e){} });
+});
+
+/* ===== Expose small API for debugging in console ===== */
+window.__oee = {
+  add: ()=> document.getElementById('addMachineBtn').click(),
+  list: ()=> Object.keys(machines)
+};
+</script>
+</body>
+</html>
